@@ -11,3 +11,38 @@ In order to test AURA, first get your test device ready. Install Python 3.12 or 
 Then, type: cd src-code
 Lastly, type in: python AURA-main-code.py
 Then, AURA Beta will run on your device so you can test it.
+
+# Testing instructions for cloud compute
+If you are using cloud compute like Google Colab, Kaggle, Hugging Face Spaces, etc, follow the instructions given below for your cloud compute provider:
+
+# Google Colab and Kaggle Notebooks
+First, make a blank notebook in Google Colab or Kaggle. Then paste the contents of AURA-Beta/src-code/AURA-main-code.py onto your code cell. (Contents can be viewed in GitHub). Now, run the code cell and easily test AURA Beta without installing or running anything on your local machine. This is guaranteed to work on Google Colab using T4 GPU because it was one of the testing environments we used to test AURA Beta.
+
+# Hugging Face Spaces
+If you are using Hugging Face Spaces, you have a repo like setup (similar to GitHub) which makes your job quite easy. All you have to do is create a Streamlit Template Space (Why Streamlit when there is going to be no Streamlit UI?: The Streamlit Template Space comes with a prebuilt Dockerfile that is perfect for our purposes). So make a Streamlit Template Space with the configuration of your choice. Now, go to your repository and follow these instructions: 
+
+Delete the existing app.py
+Do not do anything to the Dockerfile: Leave it as is: It's already preconfigured the way we need it
+Now come over to the AURA-Beta GitHub Repository and copy the contents of src-code/AURA-main-code.py.
+Now create a new file in your Hugging Face Repository called "app.py" and paste the previously copied contents as the contents of your app.py
+Now, after you make the file, Hugging Face with automatically start building your space. Don't mind it. It will error out because you need to do an extra step
+Go to the "requirements.txt" file and edit it: Remove all existing items and copy this list: 
+
+
+torch
+sentence-transformers
+networkx
+datasets
+numpy
+scikit-learn
+tqdm
+transformers
+
+
+Then, paste this list as the contents of "requirements.txt"
+Now save it and Hugging Face will start building
+It might take a while, but then, it will say Starting and start your space
+Then you can test AURA-Beta as much as you want!
+
+Hugging Face might be the most tedious, but also the most rewarding, because now, you have a website program just to try AURA Beta out whenever you want to!
+
