@@ -24,7 +24,7 @@ If you are using Hugging Face Spaces, you have a repo like setup (similar to Git
 Delete the existing app.py
 Do not do anything to the Dockerfile: Leave it as is: It's already preconfigured the way we need it
 Now come over to the AURA-Beta GitHub Repository and copy the contents of src-code/AURA-main-code.py.
-Now create a new file in your Hugging Face Repository called "app.py" and paste the previously copied contents as the contents of your app.py
+Now create a new file in your Hugging Face Repository called "src/streamlit_app.py" and paste the previously copied contents as the contents of your app.py
 Now, after you make the file, Hugging Face with automatically start building your space. Don't mind it. It will error out because you need to do an extra step
 Go to the "requirements.txt" file and edit it: Remove all existing items and copy this list: 
 
