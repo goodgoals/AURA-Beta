@@ -1289,13 +1289,72 @@ def build_core_knowledge(engine: CognitiveEngine):
     """
     Load basic commonsense knowledge + rules.
     """
-    fire_hot = Fact(subject="fire", predicate="is", obj="hot", confidence=0.95, polarity=1, source="core")
-    stove_hot = Fact(subject="stove", predicate="is", obj="hot", confidence=0.9, polarity=1, source="core")
-    touching_fire_burn = Fact(subject="touching_fire", predicate="causes", obj="burn", confidence=0.95, polarity=1, source="core")
+    core_facts = [
+        Fact(subject="fire", predicate="is", obj="hot", confidence=0.95, polarity=1, source="core"),
+        Fact(subject="stove", predicate="is", obj="hot", confidence=0.9, polarity=1, source="core"),
+        Fact(subject="boiling_water", predicate="is", obj="hot", confidence=0.94, polarity=1, source="core"),
+        Fact(subject="steam", predicate="is", obj="hot", confidence=0.88, polarity=1, source="core"),
+        Fact(subject="heated_metal", predicate="is", obj="hot", confidence=0.9, polarity=1, source="core"),
+        Fact(subject="campfire_coals", predicate="is", obj="hot", confidence=0.93, polarity=1, source="core"),
+        Fact(subject="oven_rack", predicate="is", obj="hot", confidence=0.87, polarity=1, source="core"),
+        Fact(subject="candle_flame", predicate="is", obj="hot", confidence=0.91, polarity=1, source="core"),
+        Fact(subject="space_heater", predicate="is", obj="hot", confidence=0.86, polarity=1, source="core"),
+        Fact(subject="lava", predicate="is", obj="hot", confidence=0.99, polarity=1, source="core"),
+        Fact(subject="radiator", predicate="is", obj="hot", confidence=0.84, polarity=1, source="core"),
+        Fact(subject="sunlit_asphalt", predicate="is", obj="hot", confidence=0.78, polarity=1, source="core"),
+        Fact(subject="ice", predicate="is", obj="cold", confidence=0.98, polarity=1, source="core"),
+        Fact(subject="snow", predicate="is", obj="cold", confidence=0.95, polarity=1, source="core"),
+        Fact(subject="freezer_pack", predicate="is", obj="cold", confidence=0.91, polarity=1, source="core"),
+        Fact(subject="cold_water", predicate="is", obj="cold", confidence=0.86, polarity=1, source="core"),
+        Fact(subject="frozen_metal", predicate="is", obj="cold", confidence=0.82, polarity=1, source="core"),
+        Fact(subject="dry_ice", predicate="is", obj="cold", confidence=0.94, polarity=1, source="core"),
+        Fact(subject="touching_fire", predicate="causes", obj="burn", confidence=0.95, polarity=1, source="core"),
+        Fact(subject="touching_lava", predicate="causes", obj="burn", confidence=0.99, polarity=1, source="core"),
+        Fact(subject="touching_steam", predicate="causes", obj="burn", confidence=0.9, polarity=1, source="core"),
+        Fact(subject="touching_hot_pan", predicate="causes", obj="burn", confidence=0.93, polarity=1, source="core"),
+        Fact(subject="touching_candle_flame", predicate="causes", obj="burn", confidence=0.92, polarity=1, source="core"),
+        Fact(subject="touching_oven_rack", predicate="causes", obj="burn", confidence=0.88, polarity=1, source="core"),
+        Fact(subject="touching_dry_ice", predicate="causes", obj="burn", confidence=0.78, polarity=1, source="core"),
+        Fact(subject="knife", predicate="is", obj="sharp", confidence=0.96, polarity=1, source="core"),
+        Fact(subject="broken_glass", predicate="is", obj="sharp", confidence=0.94, polarity=1, source="core"),
+        Fact(subject="cactus_spine", predicate="is", obj="sharp", confidence=0.83, polarity=1, source="core"),
+        Fact(subject="needle", predicate="is", obj="sharp", confidence=0.95, polarity=1, source="core"),
+        Fact(subject="touching_knife_edge", predicate="causes", obj="cut", confidence=0.92, polarity=1, source="core"),
+        Fact(subject="touching_broken_glass", predicate="causes", obj="cut", confidence=0.91, polarity=1, source="core"),
+        Fact(subject="touching_needle_tip", predicate="causes", obj="cut", confidence=0.85, polarity=1, source="core"),
+        Fact(subject="electric_socket", predicate="is", obj="dangerous", confidence=0.9, polarity=1, source="core"),
+        Fact(subject="wet_floor", predicate="is", obj="slippery", confidence=0.92, polarity=1, source="core"),
+        Fact(subject="ice_patch", predicate="is", obj="slippery", confidence=0.95, polarity=1, source="core"),
+        Fact(subject="oil_spill", predicate="is", obj="slippery", confidence=0.94, polarity=1, source="core"),
+        Fact(subject="running", predicate="on", obj="wet_floor", confidence=0.78, polarity=1, source="core"),
+        Fact(subject="running", predicate="on", obj="ice_patch", confidence=0.8, polarity=1, source="core"),
+        Fact(subject="touching_electric_socket", predicate="causes", obj="shock", confidence=0.93, polarity=1, source="core"),
+        Fact(subject="shock", predicate="is", obj="dangerous", confidence=0.95, polarity=1, source="core"),
+        Fact(subject="smoke", predicate="indicates", obj="fire", confidence=0.82, polarity=1, source="core"),
+        Fact(subject="dark_clouds", predicate="indicate", obj="rain", confidence=0.74, polarity=1, source="core"),
+        Fact(subject="rain", predicate="makes", obj="ground_wet", confidence=0.87, polarity=1, source="core"),
+        Fact(subject="ground_wet", predicate="increases", obj="slip_risk", confidence=0.84, polarity=1, source="core"),
+        Fact(subject="seatbelt", predicate="reduces", obj="injury_risk", confidence=0.89, polarity=1, source="core"),
+        Fact(subject="helmet", predicate="reduces", obj="head_injury_risk", confidence=0.9, polarity=1, source="core"),
+        Fact(subject="washing_hands", predicate="reduces", obj="germ_spread", confidence=0.88, polarity=1, source="core"),
+        Fact(subject="soap", predicate="helps", obj="clean_hands", confidence=0.9, polarity=1, source="core"),
+        Fact(subject="clean_hands", predicate="reduces", obj="infection_risk", confidence=0.86, polarity=1, source="core"),
+        Fact(subject="sleep", predicate="improves", obj="focus", confidence=0.83, polarity=1, source="core"),
+        Fact(subject="exercise", predicate="improves", obj="health", confidence=0.88, polarity=1, source="core"),
+        Fact(subject="dehydration", predicate="causes", obj="fatigue", confidence=0.81, polarity=1, source="core"),
+        Fact(subject="water", predicate="reduces", obj="dehydration", confidence=0.92, polarity=1, source="core"),
+        Fact(subject="fatigue", predicate="reduces", obj="attention", confidence=0.85, polarity=1, source="core"),
+        Fact(subject="low_attention", predicate="increases", obj="mistake_risk", confidence=0.79, polarity=1, source="core"),
+        Fact(subject="traffic_light_red", predicate="means", obj="stop", confidence=0.97, polarity=1, source="core"),
+        Fact(subject="traffic_light_green", predicate="means", obj="go", confidence=0.97, polarity=1, source="core"),
+        Fact(subject="stop_sign", predicate="means", obj="stop", confidence=0.98, polarity=1, source="core"),
+        Fact(subject="heavy_rain", predicate="reduces", obj="visibility", confidence=0.84, polarity=1, source="core"),
+        Fact(subject="low_visibility", predicate="increases", obj="accident_risk", confidence=0.86, polarity=1, source="core"),
+        Fact(subject="high_speed", predicate="increases", obj="accident_risk", confidence=0.9, polarity=1, source="core"),
+    ]
 
-    engine.add_fact(fire_hot)
-    engine.add_fact(stove_hot)
-    engine.add_fact(touching_fire_burn)
+    for fact in core_facts:
+        engine.add_fact(fact)
 
     # Manual rules
     rule1 = Rule(
