@@ -1112,68 +1112,133 @@ class NLParser:
 # Dataset Ingestion (Omniscience)
 # ==========================
 
-def ingest_omniscience(engine: CognitiveEngine, max_items: int = 200):
+def _value_to_text(value: Any) -> str:
+    """Convert common Hugging Face dataset cell values into readable text."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    if isinstance(value, dict):
+        parts = []
+        for k, v in value.items():
+            v_text = _value_to_text(v)
+            if v_text:
+                parts.append(f"{k}: {v_text}")
+        return " | ".join(parts)
+    if isinstance(value, (list, tuple)):
+        parts = [_value_to_text(v) for v in value]
+        return " | ".join([p for p in parts if p])
+    return str(value)
+
+
+def _extract_text_fields(item: Dict[str, Any]) -> List[str]:
+    """Extract likely natural-language fields from an arbitrary HF dataset row."""
+    preferred_order = [
+        "input", "output", "question", "answer", "instruction", "response",
+        "prompt", "context", "text", "title", "content", "summary", "passage",
+    ]
+
+    extracted: List[str] = []
+    used_keys = set()
+
+    for key in preferred_order:
+        if key in item:
+            text = _value_to_text(item.get(key))
+            if text:
+                extracted.append(text)
+                used_keys.add(key)
+
+    for key, value in item.items():
+        if key in used_keys:
+            continue
+        text = _value_to_text(value)
+        if text and len(normalize_text(text)) >= 3:
+            extracted.append(f"{key}: {text}")
+
+    # Preserve order but remove duplicates
+    deduped: List[str] = []
+    seen = set()
+    for text in extracted:
+        marker = normalize_text(text)
+        if marker and marker not in seen:
+            deduped.append(text)
+            seen.add(marker)
+    return deduped
+
+
+def ingest_hf_dataset(
+    engine: CognitiveEngine,
+    dataset_name: str,
+    max_items: int = 200,
+    split: Optional[str] = None,
+    config_name: Optional[str] = None,
+):
     """
-    Ingests the ArtificialAnalysis/AA-Omniscience-Public dataset
-    into sensory, semantic, and episodic memory.
-
-    Each dataset item typically contains:
-        - "input": natural language prompt
-        - "output": natural language answer
-        - "metadata": optional
+    Ingest an arbitrary Hugging Face dataset into sensory, semantic, and episodic memory.
     """
+    print(f"Loading HF dataset: {dataset_name}...")
 
-    print("Loading Omniscience dataset...")
-    ds = load_dataset("ArtificialAnalysis/AA-Omniscience-Public")
-    data = ds["train"]
+    if config_name:
+        ds = load_dataset(dataset_name, name=config_name)
+    else:
+        ds = load_dataset(dataset_name)
 
+    if split is None:
+        if "train" in ds:
+            split = "train"
+        else:
+            split = list(ds.keys())[0]
+
+    data = ds[split]
     parser = NLParser(engine)
+
     count = 0
+    skipped = 0
 
     for item in data:
-        text_in = item.get("input", "")
-        text_out = item.get("output", "")
-
-        if not text_in and not text_out:
+        fields = _extract_text_fields(item)
+        if not fields:
+            skipped += 1
             continue
 
-        # -------------------------
-        # Sensory Memory
-        # -------------------------
-        combined_text = f"{text_in} -> {text_out}"
+        combined_text = " -> ".join(fields)
         normalized = normalize_text(combined_text)
         emb = embedding_service.encode(normalized)
         engine.sensory.add_entry(combined_text, embedding=emb)
 
-        # -------------------------
-        # Structured Fact Extraction
-        # -------------------------
-        fact_in = parser.parse_assertion(text_in) if text_in else None
-        fact_out = parser.parse_assertion(text_out) if text_out else None
-
-        # Add to semantic + working memory
         local_facts = []
-        if fact_in:
-            engine.add_fact(fact_in)
-            local_facts.append(fact_in)
-        if fact_out:
-            engine.add_fact(fact_out)
-            local_facts.append(fact_out)
+        for text in fields:
+            fact = parser.parse_assertion(text)
+            if fact:
+                engine.add_fact(fact)
+                local_facts.append(fact)
 
-        # -------------------------
-        # Episodic Memory
-        # -------------------------
         if local_facts:
             engine.episodic.add_episode(
-                description="omniscience_item",
-                facts=local_facts
+                description=f"{dataset_name}:{split}",
+                facts=local_facts,
             )
 
         count += 1
         if count >= max_items:
             break
 
-    print(f"Ingested {count} items from AA-Omniscience-Public dataset.")
+    print(
+        f"Ingested {count} items from {dataset_name} ({split}). "
+        f"Skipped {skipped} empty items."
+    )
+
+
+def ingest_omniscience(engine: CognitiveEngine, max_items: int = 200):
+    """Backward-compatible Omniscience dataset ingestion wrapper."""
+    ingest_hf_dataset(
+        engine=engine,
+        dataset_name="ArtificialAnalysis/AA-Omniscience-Public",
+        max_items=max_items,
+        split="train",
+    )
 # ==========================
 # AURA v7 — Neuro‑Symbolic Hybrid Brain
 # Chunk 10 / 10
@@ -1410,6 +1475,7 @@ def main():
     print("  - 'does touching ice cause burn?'")
     print("  - 'is stove dangerous?'")
     print("  - 'do hot things NOT burn with fire?'")
+    print("  - 'ingest <hf_dataset_name> [split] [max_items]' (example: ingest ag_news train 25)")
     print("Type 'exit' to quit.\n")
 
     while True:
@@ -1421,6 +1487,37 @@ def main():
         if query.lower() in {"exit", "quit"}:
             print("Goodbye.")
             break
+
+        # Dynamic Hugging Face ingestion
+        if query.lower().startswith("ingest "):
+            parts = query.split()
+            if len(parts) < 2:
+                print("AURA: Usage -> ingest <dataset_name> [split] [max_items]\n")
+                continue
+
+            dataset_name = parts[1]
+            split = parts[2] if len(parts) >= 3 else None
+
+            max_items = 50
+            if len(parts) >= 4:
+                try:
+                    max_items = int(parts[3])
+                except ValueError:
+                    print("AURA: max_items must be an integer.\n")
+                    continue
+
+            try:
+                ingest_hf_dataset(
+                    engine,
+                    dataset_name=dataset_name,
+                    split=split,
+                    max_items=max_items,
+                )
+                engine.reason_forward_until_fixpoint(max_iterations=3)
+                print(f"AURA: Finished ingesting '{dataset_name}'.\n")
+            except Exception as e:
+                print(f"AURA: Failed to ingest dataset '{dataset_name}': {e}\n")
+            continue
 
         # Assertions
         if query.lower().startswith("assert "):
