@@ -1191,6 +1191,11 @@ class AURAInterface:
         self.engine = engine
         self.parser = NLParser(engine)
 
+    @staticmethod
+    def _evidence_text(fact: Fact) -> str:
+        """Return a user-facing evidence phrase derived from a fact."""
+        return fact.to_text(include_polarity=True)
+
     # ---------------------------------------------------------
     # Assertions
     # ---------------------------------------------------------
@@ -1215,14 +1220,14 @@ class AURAInterface:
             if facts:
                 best = max(facts, key=lambda f: f.confidence)
                 return {
-                    "response": "Yes",
+                    "response": self._evidence_text(best),
                     "explanation": f"Proved negated fact: '{best.to_text()}'",
                     "confidence": float(best.confidence),
                     "trace": trace + [e.message for e in self.engine.meta.recent_trace()],
                 }
             else:
                 return {
-                    "response": "No",
+                    "response": "No supporting evidence found in rules or known facts.",
                     "explanation": "No rule or fact supports the negated claim.",
                     "confidence": 0.0,
                     "trace": [e.message for e in self.engine.meta.recent_trace()],
@@ -1233,7 +1238,7 @@ class AURAInterface:
         if facts:
             best = max(facts, key=lambda f: f.confidence)
             return {
-                "response": "Yes" if best.polarity == 1 else "No",
+                "response": self._evidence_text(best),
                 "explanation": f"Proved: '{best.to_text()}' via backward reasoning.",
                 "confidence": float(best.confidence),
                 "trace": trace + [e.message for e in self.engine.meta.recent_trace()],
@@ -1243,7 +1248,7 @@ class AURAInterface:
         fact = self.engine.semantic.search_fact(query_embedding, threshold=0.6)
         if fact:
             return {
-                "response": "Yes" if fact.polarity == 1 else "No",
+                "response": self._evidence_text(fact),
                 "explanation": f"Found in semantic memory: '{fact.to_text()}'",
                 "confidence": float(fact.confidence),
                 "trace": [e.message for e in self.engine.meta.recent_trace()],
@@ -1261,7 +1266,7 @@ class AURAInterface:
         if best_idx is not None and best_score >= 0.35:
             best_entry = self.engine.sensory.entries[best_idx]
             return {
-                "response": "Possibly",
+                "response": best_entry[:120],
                 "explanation": f"Sensory memory match: {best_entry[:200]}...",
                 "confidence": float(best_score),
                 "trace": [e.message for e in self.engine.meta.recent_trace()],
@@ -1269,7 +1274,7 @@ class AURAInterface:
 
         # Unknown
         return {
-            "response": "Unknown",
+            "response": "No supporting evidence found in reasoning, semantic memory, or sensory memory.",
             "explanation": f"No information found for '{text}'",
             "confidence": 0.0,
             "trace": [e.message for e in self.engine.meta.recent_trace()],
