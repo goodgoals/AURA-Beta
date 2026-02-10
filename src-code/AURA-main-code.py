@@ -6,6 +6,10 @@
 
 import time
 import re
+import json
+from urllib.parse import quote_plus
+from urllib.request import urlopen, Request
+from urllib.error import URLError, HTTPError
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Iterable, Tuple, Callable
 
@@ -96,6 +100,169 @@ class EmbeddingService:
 
 # Global embedding service instance
 embedding_service = EmbeddingService()
+
+
+# ==========================
+# Web Search Service
+# ==========================
+
+class WebSearchService:
+    """
+    Web search/lookup fallback with query cleaning + multi-source retrieval.
+    Uses:
+    - Wikipedia (search + summary API)
+    - DuckDuckGo Instant Answer API as a supplemental source
+    """
+    def __init__(self, timeout_seconds: int = 5):
+        self.timeout_seconds = timeout_seconds
+        self.stopwords = {
+            "aura", "search", "web", "find", "lookup", "look", "up", "please", "tell", "me",
+            "what", "who", "where", "when", "why", "how", "is", "are", "the", "a", "an",
+            "for", "about", "of", "to", "in", "on", "and", "from", "data",
+        }
+
+    def search(self, query: str) -> Optional[Dict[str, Any]]:
+        variants = self._query_variants(query)
+
+        # 1) Wikipedia-focused retrieval first (more stable topical matching)
+        for q in variants:
+            result = self._search_wikipedia(q)
+            if result:
+                result["query_used"] = q
+                return result
+
+        # 2) DuckDuckGo fallback
+        for q in variants:
+            result = self._search_duckduckgo(q)
+            if result:
+                result["query_used"] = q
+                return result
+
+        return None
+
+    def _query_variants(self, query: str) -> List[str]:
+        original = query.strip()
+        norm = normalize_text(query)
+        tokens = [t for t in norm.split() if t and t not in self.stopwords]
+        cleaned = " ".join(tokens).strip()
+
+        variants = []
+        if original:
+            variants.append(original)
+        if cleaned and cleaned.lower() != original.lower():
+            variants.append(cleaned)
+
+        # Deduplicate while preserving order
+        unique = []
+        seen = set()
+        for q in variants:
+            k = q.lower()
+            if k not in seen:
+                unique.append(q)
+                seen.add(k)
+        return unique if unique else [query]
+
+    def _read_json(self, url: str) -> Optional[Dict[str, Any]]:
+        try:
+            req = Request(url, headers={"User-Agent": "AURA-Beta/1.0 (+https://github.com/)"})
+            with urlopen(req, timeout=self.timeout_seconds) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except (URLError, HTTPError, TimeoutError, json.JSONDecodeError):
+            return None
+
+    def _search_duckduckgo(self, query: str) -> Optional[Dict[str, Any]]:
+        encoded = quote_plus(query)
+        url = f"https://api.duckduckgo.com/?q={encoded}&format=json&no_redirect=1&no_html=1"
+        payload = self._read_json(url)
+        if not payload:
+            return None
+
+        abstract = (payload.get("AbstractText") or "").strip()
+        heading = (payload.get("Heading") or "").strip()
+        source_url = (payload.get("AbstractURL") or "").strip()
+
+        if abstract:
+            title = heading if heading else "DuckDuckGo Instant Answer"
+            return {
+                "title": title,
+                "snippet": abstract,
+                "url": source_url if source_url else "https://duckduckgo.com/",
+                "provider": "duckduckgo",
+            }
+
+        related = payload.get("RelatedTopics") or []
+        for item in related:
+            if isinstance(item, dict) and item.get("Text"):
+                return {
+                    "title": "DuckDuckGo Related Topic",
+                    "snippet": item["Text"],
+                    "url": item.get("FirstURL", "https://duckduckgo.com/"),
+                    "provider": "duckduckgo",
+                }
+
+        # DDG sometimes nests additional topic groups in "Topics"
+        for group in related:
+            if isinstance(group, dict) and isinstance(group.get("Topics"), list):
+                for nested in group["Topics"]:
+                    if isinstance(nested, dict) and nested.get("Text"):
+                        return {
+                            "title": "DuckDuckGo Related Topic",
+                            "snippet": nested["Text"],
+                            "url": nested.get("FirstURL", "https://duckduckgo.com/"),
+                            "provider": "duckduckgo",
+                        }
+
+        return None
+
+    def _search_wikipedia(self, query: str) -> Optional[Dict[str, Any]]:
+        encoded = quote_plus(query)
+        search_url = (
+            "https://en.wikipedia.org/w/api.php"
+            f"?action=query&list=search&srsearch={encoded}&format=json"
+        )
+        search_payload = self._read_json(search_url)
+        if not search_payload:
+            return None
+
+        search_results = ((search_payload.get("query") or {}).get("search") or [])[:5]
+        if not search_results:
+            return None
+
+        for candidate in search_results:
+            title = candidate.get("title")
+            if not title:
+                continue
+
+            summary_url = (
+                "https://en.wikipedia.org/api/rest_v1/page/summary/"
+                f"{quote_plus(title)}"
+            )
+            summary_payload = self._read_json(summary_url)
+            if not summary_payload:
+                continue
+
+            extract = (summary_payload.get("extract") or "").strip()
+            page_url = (
+                ((summary_payload.get("content_urls") or {}).get("desktop") or {}).get("page")
+                or f"https://en.wikipedia.org/wiki/{quote_plus(title)}"
+            )
+            description = (summary_payload.get("description") or "").strip()
+
+            # Filter out clearly irrelevant gaming results when user asks generic factual questions.
+            # This directly addresses common Warcraft-style false matches for "aura" phrasing.
+            joined = f"{title} {description} {extract}".lower()
+            if "world of warcraft" in joined and "warcraft" not in normalize_text(query):
+                continue
+
+            if extract:
+                return {
+                    "title": title,
+                    "snippet": extract,
+                    "url": page_url,
+                    "provider": "wikipedia",
+                }
+
+        return None
 # ==========================
 # AURA v7 — Neuro‑Symbolic Hybrid Brain
 # Chunk 2 / 10
@@ -209,6 +376,20 @@ class ReasoningEvent:
     message: str
     confidence: float
     timestamp: float = field(default_factory=time.time)
+
+
+@dataclass
+class WebDocument:
+    """Indexed web result for fast reuse across future queries."""
+    title: str
+    snippet: str
+    url: str
+    provider: str
+    query: str
+    timestamp: float = field(default_factory=time.time)
+
+    def to_text(self) -> str:
+        return f"{self.title}. {self.snippet}"
 # ==========================
 # AURA v7 — Neuro‑Symbolic Hybrid Brain
 # Chunk 3 / 10
@@ -264,6 +445,32 @@ class SensoryMemory:
         if embedding is None:
             embedding = embedding_service.encode(normalize_text(text))
         self.entry_embeddings.append(embedding)
+
+
+class WebMemory:
+    """
+    Stores indexed web search results and enables semantic lookup over them.
+    """
+    def __init__(self):
+        self.docs: List[WebDocument] = []
+        self.index = RetrievalIndex()
+        self.url_map: Dict[str, WebDocument] = {}
+
+    def add_document(self, doc: WebDocument):
+        if doc.url in self.url_map:
+            return
+        self.docs.append(doc)
+        self.url_map[doc.url] = doc
+        self.index.add(embedding_service.encode(normalize_text(doc.to_text())), doc)
+
+    def search(self, query_embedding: torch.Tensor, threshold: float = 0.45) -> Optional[Tuple[WebDocument, float]]:
+        results = self.index.search(query_embedding, top_k=3)
+        if not results:
+            return None
+        best_doc, score = results[0]
+        if score < threshold:
+            return None
+        return best_doc, score
 
 
 # ==========================
@@ -875,6 +1082,7 @@ class CognitiveEngine:
     def __init__(self):
         # Memory systems
         self.sensory = SensoryMemory()
+        self.web = WebMemory()
         self.working = WorkingMemory()
         self.semantic = SemanticMemory()
         self.episodic = EpisodicMemory()
@@ -1255,6 +1463,7 @@ class AURAInterface:
     def __init__(self, engine: CognitiveEngine):
         self.engine = engine
         self.parser = NLParser(engine)
+        self.web_search = WebSearchService()
 
     @staticmethod
     def _evidence_text(fact: Fact) -> str:
@@ -1334,6 +1543,44 @@ class AURAInterface:
                 "response": best_entry[:120],
                 "explanation": f"Sensory memory match: {best_entry[:200]}...",
                 "confidence": float(best_score),
+                "trace": [e.message for e in self.engine.meta.recent_trace()],
+            }
+
+        # Indexed web memory fallback (reuse prior web results before new network call)
+        indexed_web = self.engine.web.search(query_embedding, threshold=0.45)
+        if indexed_web:
+            web_doc, sim = indexed_web
+            self.engine.meta.log("web_index", f"Matched indexed web document: {web_doc.url}", float(sim))
+            return {
+                "response": f"{web_doc.title}: {web_doc.snippet[:300]}",
+                "explanation": f"Found in indexed web memory ({web_doc.provider}). Source: {web_doc.url}",
+                "confidence": float(min(max(sim, 0.0), 1.0)),
+                "trace": [e.message for e in self.engine.meta.recent_trace()],
+            }
+
+        # Web fallback (only when local reasoning/memory cannot answer)
+        web_result = self.web_search.search(text)
+        if web_result:
+            response = f"{web_result['title']}: {web_result['snippet'][:300]}"
+            explanation = (
+                f"Web lookup via {web_result['provider']} because no local evidence was found. "
+                f"Source: {web_result['url']}"
+            )
+
+            self.engine.web.add_document(
+                WebDocument(
+                    title=web_result["title"],
+                    snippet=web_result["snippet"],
+                    url=web_result["url"],
+                    provider=web_result["provider"],
+                    query=web_result.get("query_used", text),
+                )
+            )
+            self.engine.meta.log("web_search", explanation, 0.45)
+            return {
+                "response": response,
+                "explanation": explanation,
+                "confidence": 0.45,
                 "trace": [e.message for e in self.engine.meta.recent_trace()],
             }
 
