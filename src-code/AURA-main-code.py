@@ -8,7 +8,7 @@ import time
 import re
 import json
 from urllib.parse import quote_plus
-from urllib.request import urlopen, Request
+from urllib.request import urlopen, Request, build_opener, ProxyHandler
 from urllib.error import URLError, HTTPError
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Iterable, Tuple, Callable
@@ -115,6 +115,9 @@ class WebSearchService:
     """
     def __init__(self, timeout_seconds: int = 5):
         self.timeout_seconds = timeout_seconds
+        # Try direct network first (no environment proxy), then fallback to default urlopen.
+        # This helps avoid proxy-only failures during web validation/fetching.
+        self.direct_opener = build_opener(ProxyHandler({}))
         self.stopwords = {
             "aura", "search", "web", "find", "lookup", "look", "up", "please", "tell", "me",
             "what", "who", "where", "when", "why", "how", "is", "are", "the", "a", "an",
@@ -163,8 +166,17 @@ class WebSearchService:
         return unique if unique else [query]
 
     def _read_json(self, url: str) -> Optional[Dict[str, Any]]:
+        req = Request(url, headers={"User-Agent": "AURA-Beta/1.0 (+https://github.com/)"})
+
+        # 1) Direct path (proxy bypass)
         try:
-            req = Request(url, headers={"User-Agent": "AURA-Beta/1.0 (+https://github.com/)"})
+            with self.direct_opener.open(req, timeout=self.timeout_seconds) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except (URLError, HTTPError, TimeoutError, json.JSONDecodeError):
+            pass
+
+        # 2) Default path (environment proxies / defaults)
+        try:
             with urlopen(req, timeout=self.timeout_seconds) as resp:
                 return json.loads(resp.read().decode("utf-8"))
         except (URLError, HTTPError, TimeoutError, json.JSONDecodeError):
