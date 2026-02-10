@@ -6,6 +6,10 @@
 
 import time
 import re
+import json
+from urllib.parse import quote_plus
+from urllib.request import urlopen
+from urllib.error import URLError, HTTPError
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Iterable, Tuple, Callable
 
@@ -96,6 +100,108 @@ class EmbeddingService:
 
 # Global embedding service instance
 embedding_service = EmbeddingService()
+
+
+# ==========================
+# Web Search Service
+# ==========================
+
+class WebSearchService:
+    """
+    Lightweight web search/lookup fallback.
+    Uses:
+    - DuckDuckGo Instant Answer API
+    - Wikipedia Summary API fallback
+    """
+    def __init__(self, timeout_seconds: int = 5):
+        self.timeout_seconds = timeout_seconds
+
+    def search(self, query: str) -> Optional[Dict[str, Any]]:
+        result = self._search_duckduckgo(query)
+        if result:
+            return result
+        return self._search_wikipedia(query)
+
+    def _read_json(self, url: str) -> Optional[Dict[str, Any]]:
+        try:
+            with urlopen(url, timeout=self.timeout_seconds) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except (URLError, HTTPError, TimeoutError, json.JSONDecodeError):
+            return None
+
+    def _search_duckduckgo(self, query: str) -> Optional[Dict[str, Any]]:
+        encoded = quote_plus(query)
+        url = f"https://api.duckduckgo.com/?q={encoded}&format=json&no_redirect=1&no_html=1"
+        payload = self._read_json(url)
+        if not payload:
+            return None
+
+        abstract = (payload.get("AbstractText") or "").strip()
+        heading = (payload.get("Heading") or "").strip()
+        source_url = (payload.get("AbstractURL") or "").strip()
+
+        if abstract:
+            title = heading if heading else "DuckDuckGo Instant Answer"
+            return {
+                "title": title,
+                "snippet": abstract,
+                "url": source_url if source_url else "https://duckduckgo.com/",
+                "provider": "duckduckgo",
+            }
+
+        related = payload.get("RelatedTopics") or []
+        for item in related:
+            if isinstance(item, dict) and item.get("Text"):
+                return {
+                    "title": "DuckDuckGo Related Topic",
+                    "snippet": item["Text"],
+                    "url": item.get("FirstURL", "https://duckduckgo.com/"),
+                    "provider": "duckduckgo",
+                }
+
+        return None
+
+    def _search_wikipedia(self, query: str) -> Optional[Dict[str, Any]]:
+        encoded = quote_plus(query)
+        search_url = (
+            "https://en.wikipedia.org/w/api.php"
+            f"?action=query&list=search&srsearch={encoded}&format=json"
+        )
+        search_payload = self._read_json(search_url)
+        if not search_payload:
+            return None
+
+        search_results = ((search_payload.get("query") or {}).get("search") or [])
+        if not search_results:
+            return None
+
+        title = search_results[0].get("title")
+        if not title:
+            return None
+
+        summary_url = (
+            "https://en.wikipedia.org/api/rest_v1/page/summary/"
+            f"{quote_plus(title)}"
+        )
+        summary_payload = self._read_json(summary_url)
+        if not summary_payload:
+            return None
+
+        extract = (summary_payload.get("extract") or "").strip()
+        page_url = (
+            ((summary_payload.get("content_urls") or {}).get("desktop") or {}).get("page")
+            or f"https://en.wikipedia.org/wiki/{quote_plus(title)}"
+        )
+
+        if not extract:
+            return None
+
+        return {
+            "title": title,
+            "snippet": extract,
+            "url": page_url,
+            "provider": "wikipedia",
+        }
 # ==========================
 # AURA v7 — Neuro‑Symbolic Hybrid Brain
 # Chunk 2 / 10
@@ -1255,6 +1361,7 @@ class AURAInterface:
     def __init__(self, engine: CognitiveEngine):
         self.engine = engine
         self.parser = NLParser(engine)
+        self.web_search = WebSearchService()
 
     @staticmethod
     def _evidence_text(fact: Fact) -> str:
@@ -1334,6 +1441,22 @@ class AURAInterface:
                 "response": best_entry[:120],
                 "explanation": f"Sensory memory match: {best_entry[:200]}...",
                 "confidence": float(best_score),
+                "trace": [e.message for e in self.engine.meta.recent_trace()],
+            }
+
+        # Web fallback (only when local reasoning/memory cannot answer)
+        web_result = self.web_search.search(text)
+        if web_result:
+            response = f"{web_result['title']}: {web_result['snippet'][:300]}"
+            explanation = (
+                f"Web lookup via {web_result['provider']} because no local evidence was found. "
+                f"Source: {web_result['url']}"
+            )
+            self.engine.meta.log("web_search", explanation, 0.45)
+            return {
+                "response": response,
+                "explanation": explanation,
+                "confidence": 0.45,
                 "trace": [e.message for e in self.engine.meta.recent_trace()],
             }
 
