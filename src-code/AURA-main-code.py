@@ -390,18 +390,6 @@ class ReasoningEvent:
     timestamp: float = field(default_factory=time.time)
 
 
-@dataclass
-class WebDocument:
-    """Indexed web result for fast reuse across future queries."""
-    title: str
-    snippet: str
-    url: str
-    provider: str
-    query: str
-    timestamp: float = field(default_factory=time.time)
-
-    def to_text(self) -> str:
-        return f"{self.title}. {self.snippet}"
 # ==========================
 # AURA v7 — Neuro‑Symbolic Hybrid Brain
 # Chunk 3 / 10
@@ -457,32 +445,6 @@ class SensoryMemory:
         if embedding is None:
             embedding = embedding_service.encode(normalize_text(text))
         self.entry_embeddings.append(embedding)
-
-
-class WebMemory:
-    """
-    Stores indexed web search results and enables semantic lookup over them.
-    """
-    def __init__(self):
-        self.docs: List[WebDocument] = []
-        self.index = RetrievalIndex()
-        self.url_map: Dict[str, WebDocument] = {}
-
-    def add_document(self, doc: WebDocument):
-        if doc.url in self.url_map:
-            return
-        self.docs.append(doc)
-        self.url_map[doc.url] = doc
-        self.index.add(embedding_service.encode(normalize_text(doc.to_text())), doc)
-
-    def search(self, query_embedding: torch.Tensor, threshold: float = 0.45) -> Optional[Tuple[WebDocument, float]]:
-        results = self.index.search(query_embedding, top_k=3)
-        if not results:
-            return None
-        best_doc, score = results[0]
-        if score < threshold:
-            return None
-        return best_doc, score
 
 
 # ==========================
@@ -1094,7 +1056,6 @@ class CognitiveEngine:
     def __init__(self):
         # Memory systems
         self.sensory = SensoryMemory()
-        self.web = WebMemory()
         self.working = WorkingMemory()
         self.semantic = SemanticMemory()
         self.episodic = EpisodicMemory()
@@ -1476,6 +1437,8 @@ class AURAInterface:
         self.engine = engine
         self.parser = NLParser(engine)
         self.web_search = WebSearchService()
+        self.web_index = RetrievalIndex()
+        self.web_docs_by_url: Dict[str, Dict[str, str]] = {}
 
     @staticmethod
     def _evidence_text(fact: Fact) -> str:
@@ -1559,16 +1522,17 @@ class AURAInterface:
             }
 
         # Indexed web memory fallback (reuse prior web results before new network call)
-        indexed_web = self.engine.web.search(query_embedding, threshold=0.45)
-        if indexed_web:
-            web_doc, sim = indexed_web
-            self.engine.meta.log("web_index", f"Matched indexed web document: {web_doc.url}", float(sim))
-            return {
-                "response": f"{web_doc.title}: {web_doc.snippet[:300]}",
-                "explanation": f"Found in indexed web memory ({web_doc.provider}). Source: {web_doc.url}",
-                "confidence": float(min(max(sim, 0.0), 1.0)),
-                "trace": [e.message for e in self.engine.meta.recent_trace()],
-            }
+        indexed_hits = self.web_index.search(query_embedding, top_k=1)
+        if indexed_hits:
+            web_doc, sim = indexed_hits[0]
+            if sim >= 0.45:
+                self.engine.meta.log("web_index", f"Matched indexed web document: {web_doc['url']}", float(sim))
+                return {
+                    "response": f"{web_doc['title']}: {web_doc['snippet'][:300]}",
+                    "explanation": f"Found in indexed web memory ({web_doc['provider']}). Source: {web_doc['url']}",
+                    "confidence": float(min(max(sim, 0.0), 1.0)),
+                    "trace": [e.message for e in self.engine.meta.recent_trace()],
+                }
 
         # Web fallback (only when local reasoning/memory cannot answer)
         web_result = self.web_search.search(text)
@@ -1579,15 +1543,19 @@ class AURAInterface:
                 f"Source: {web_result['url']}"
             )
 
-            self.engine.web.add_document(
-                WebDocument(
-                    title=web_result["title"],
-                    snippet=web_result["snippet"],
-                    url=web_result["url"],
-                    provider=web_result["provider"],
-                    query=web_result.get("query_used", text),
+            url_key = web_result["url"]
+            if url_key not in self.web_docs_by_url:
+                self.web_docs_by_url[url_key] = {
+                    "title": web_result["title"],
+                    "snippet": web_result["snippet"],
+                    "url": web_result["url"],
+                    "provider": web_result["provider"],
+                    "query": web_result.get("query_used", text),
+                }
+                self.web_index.add(
+                    embedding_service.encode(normalize_text(f"{web_result['title']} {web_result['snippet']}")),
+                    self.web_docs_by_url[url_key],
                 )
-            )
             self.engine.meta.log("web_search", explanation, 0.45)
             return {
                 "response": response,
